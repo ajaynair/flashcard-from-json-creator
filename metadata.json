@@ -1,0 +1,5 @@
+{
+  "name": "JSON Word Definer",
+  "description": "An application to load a JSON file containing words and their definitions, and display them one at a time.",
+  "requestFramePermissions": []
+}
