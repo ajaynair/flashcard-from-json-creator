@@ -1,55 +1,34 @@
 import React from 'react';
-import { WordDefinition, WordStatus } from '../types';
-import { ChevronLeftIcon, CheckCircleIcon, XCircleIcon, InformationCircleIcon } from './IconComponents';
+import { WordDefinition } from '../types';
+import { ChevronLeftIcon, InformationCircleIcon } from './IconComponents'; // Added for potential future use or consistency
+import { formatIntervalForDisplay, DAY_MS, HOUR_MS, MINUTE_MS } from '../spacedRepetition';
 
 interface AllWordsDisplayProps {
   dictionary: WordDefinition[];
-  onSetStatus: (word: string, status: WordStatus) => void;
   onBack: () => void;
   fileName: string | null;
 }
 
-export const AllWordsDisplay: React.FC<AllWordsDisplayProps> = ({ dictionary, onSetStatus, onBack, fileName }) => {
-  const knownWords = dictionary.filter(item => item.status === 'known');
-  // Only include words explicitly marked as 'unknown' (which is the default for new words).
-  const reviewLaterWords = dictionary.filter(item => item.status === 'unknown'); 
+const formatDate = (timestamp: number): string => {
+  const date = new Date(timestamp);
+  const now = Date.now();
+  const diff = timestamp - now;
 
-  const renderWordList = (words: WordDefinition[], listType: 'known' | 'reviewLater') => {
-    if (words.length === 0) {
-      return <p className="text-slate-500 text-sm px-1 py-4">No words in this category yet.</p>;
+  if (diff <= 0) return "Due now";
+  if (diff < HOUR_MS) return `In ${Math.round(diff / MINUTE_MS)}m`;
+  if (diff < DAY_MS) return `In ${Math.round(diff / HOUR_MS)}h`;
+  return date.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+};
+
+export const AllWordsDisplay: React.FC<AllWordsDisplayProps> = ({ dictionary, onBack, fileName }) => {
+
+  const sortedDictionary = [...dictionary].sort((a, b) => {
+    // Sort by next review date, then by word alphabetically
+    if (a.nextReviewDate !== b.nextReviewDate) {
+      return a.nextReviewDate - b.nextReviewDate;
     }
-    return (
-      <ul className="space-y-3">
-        {words.map(item => (
-          <li key={item.word} className="bg-slate-700/70 p-4 rounded-lg shadow-md hover:bg-slate-600/70 transition-colors duration-150">
-            <h3 className="text-lg font-semibold text-indigo-300 break-words">{item.word}</h3>
-            <p className="text-slate-300 mt-1.5 text-sm leading-relaxed break-words whitespace-pre-line">{item.definition}</p>
-            <div className="mt-3 pt-3 border-t border-slate-600/50">
-              {listType === 'known' ? (
-                <button
-                  onClick={() => onSetStatus(item.word, 'unknown')}
-                  className="text-xs font-medium text-amber-400 hover:text-amber-300 flex items-center space-x-1.5 py-1 px-2 rounded hover:bg-amber-500/10 transition-colors"
-                  aria-label={`Mark ${item.word} to review later`}
-                >
-                  <XCircleIcon className="w-4 h-4" />
-                  <span>Mark to Review Later</span>
-                </button>
-              ) : ( // reviewLater list
-                <button
-                  onClick={() => onSetStatus(item.word, 'known')}
-                  className="text-xs font-medium text-green-400 hover:text-green-300 flex items-center space-x-1.5 py-1 px-2 rounded hover:bg-green-500/10 transition-colors"
-                  aria-label={`Mark ${item.word} as known`}
-                >
-                  <CheckCircleIcon className="w-4 h-4" />
-                  <span>Mark as Known</span>
-                </button>
-              )}
-            </div>
-          </li>
-        ))}
-      </ul>
-    );
-  };
+    return a.word.localeCompare(b.word);
+  });
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 to-slate-800 text-gray-100 flex flex-col items-center p-4 selection:bg-indigo-500 selection:text-white">
@@ -57,9 +36,9 @@ export const AllWordsDisplay: React.FC<AllWordsDisplayProps> = ({ dictionary, on
         <header className="mb-6 md:mb-8 py-4 flex flex-col sm:flex-row justify-between sm:items-center">
           <div>
             <h1 className="text-3xl sm:text-4xl font-extrabold tracking-tight text-transparent bg-clip-text bg-gradient-to-r from-purple-400 via-pink-500 to-red-500">
-              All Words Review
+              All Words Status
             </h1>
-            {fileName && <p className="text-sm text-slate-400 mt-1">Loaded File: <span className="font-medium text-slate-300">{fileName}</span></p>}
+            {fileName && <p className="text-sm text-slate-400 mt-1">Loaded File: <span className="font-medium text-slate-300">{fileName}</span> ({dictionary.length} words)</p>}
           </div>
           <button
             onClick={onBack}
@@ -77,30 +56,43 @@ export const AllWordsDisplay: React.FC<AllWordsDisplayProps> = ({ dictionary, on
             <p className="text-slate-400 text-sm mt-2">Please upload a JSON file from the main screen to see your words here.</p>
           </div>
         ) : (
-          <main className="space-y-6 md:space-y-8">
-            <section className="bg-slate-800/60 backdrop-blur-md shadow-xl rounded-xl p-5 md:p-6">
-              <h2 className="text-xl sm:text-2xl font-semibold text-slate-100 mb-4 border-b border-slate-700 pb-3">
-                Words I Know <span className="text-base font-normal text-slate-400">({knownWords.length})</span>
-              </h2>
-              <div className="max-h-[60vh] overflow-y-auto pr-2">
-                {renderWordList(knownWords, 'known')}
-              </div>
-            </section>
-
-            <section className="bg-slate-800/60 backdrop-blur-md shadow-xl rounded-xl p-5 md:p-6">
-              <h2 className="text-xl sm:text-2xl font-semibold text-slate-100 mb-4 border-b border-slate-700 pb-3">
-                Words to Review Later <span className="text-base font-normal text-slate-400">({reviewLaterWords.length})</span>
-              </h2>
-              <div className="max-h-[60vh] overflow-y-auto pr-2">
-                {renderWordList(reviewLaterWords, 'reviewLater')}
-              </div>
-            </section>
+          <main className="bg-slate-800/60 backdrop-blur-md shadow-xl rounded-xl p-1 md:p-2">
+            <div className="max-h-[75vh] overflow-y-auto pr-2">
+              <ul className="space-y-3 p-3 md:p-4">
+                {sortedDictionary.map(item => (
+                  <li key={item.word} className="bg-slate-700/70 p-4 rounded-lg shadow-md hover:bg-slate-600/70 transition-colors duration-150">
+                    <div className="flex justify-between items-start">
+                        <h3 className="text-lg font-semibold text-indigo-300 break-words flex-1 mr-3">{item.word}</h3>
+                        <div className="text-xs text-right space-y-0.5">
+                            <span className={`capitalize px-2 py-0.5 rounded-full text-white ${
+                                item.srsState.status === 'learning' ? 'bg-yellow-500/80' :
+                                item.srsState.status === 'reviewing' ? 'bg-green-500/80' :
+                                'bg-orange-500/80' // relearning
+                            }`}>
+                                {item.srsState.status}
+                            </span>
+                             <p className="text-slate-400">
+                                Next: {formatDate(item.nextReviewDate)}
+                            </p>
+                        </div>
+                    </div>
+                    <p className="text-slate-300 mt-1.5 text-sm leading-relaxed break-words whitespace-pre-line">{item.definition}</p>
+                    <div className="mt-2 pt-2 border-t border-slate-600/50 text-xs text-slate-400">
+                      Interval: {item.srsState.interval ? formatIntervalForDisplay(item.srsState.interval) : 'N/A'} | 
+                      Ease: {item.srsState.ease.toFixed(2)} | 
+                      Step: {item.srsState.step}
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </div>
           </main>
         )}
         <footer className="mt-10 py-4 text-center text-xs text-slate-500">
-          <p>Changes made here are saved and will reflect in the learning view.</p>
+          <p>This view shows the current status of all words in your deck.</p>
         </footer>
       </div>
     </div>
   );
 };
+

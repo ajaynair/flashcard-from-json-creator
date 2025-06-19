@@ -1,15 +1,24 @@
-
-
 import React, { useState, useCallback, useEffect, useMemo } from 'react';
-import { WordDefinition, WordStatus } from './types';
+import { WordDefinition } from './types';
 import { FileUpload } from './components/FileUpload';
 import { WordDisplay } from './components/WordDisplay';
 import { NavigationControls } from './components/NavigationControls';
 import { AllWordsDisplay } from './components/AllWordsDisplay';
-import { ExclamationTriangleIcon, InformationCircleIcon, ArrowPathIcon, CheckCircleIcon, ClipboardListIcon } from './components/IconComponents';
+import { ExclamationTriangleIcon, InformationCircleIcon, ArrowPathIcon, ClipboardListIcon, SparklesIcon } from './components/IconComponents';
+import { SimpleSpacedRepetitionCard, SRSOption, DAY_MS } from './spacedRepetition';
 
-const LOCAL_STORAGE_DICTIONARY_KEY = 'wordDefinerApp_dictionary';
-const LOCAL_STORAGE_FILENAME_KEY = 'wordDefinerApp_fileName';
+const LOCAL_STORAGE_DICTIONARY_KEY = 'wordDefinerApp_dictionary_srs_v1'; // New key for SRS
+const LOCAL_STORAGE_FILENAME_KEY = 'wordDefinerApp_fileName_srs_v1';
+
+// Fisher-Yates shuffle algorithm
+function shuffleArray<T>(array: T[]): T[] {
+  const newArray = [...array];
+  for (let i = newArray.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [newArray[i], newArray[j]] = [newArray[j], newArray[i]];
+  }
+  return newArray;
+}
 
 const App: React.FC = () => {
   const [dictionary, setDictionary] = useState<WordDefinition[]>([]);
@@ -25,36 +34,53 @@ const App: React.FC = () => {
       const storedFileName = localStorage.getItem(LOCAL_STORAGE_FILENAME_KEY);
 
       if (storedDictionary) {
-        const parsedDictionary: WordDefinition[] = JSON.parse(storedDictionary);
-        if (Array.isArray(parsedDictionary) && parsedDictionary.every(item => typeof item.word === 'string' && typeof item.definition === 'string')) {
-          setDictionary(parsedDictionary);
-        } else {
-          localStorage.removeItem(LOCAL_STORAGE_DICTIONARY_KEY);
-        }
+        const parsedItems: any[] = JSON.parse(storedDictionary);
+        const migratedDictionary = parsedItems.map(item => {
+          if (item.srsState && typeof item.nextReviewDate === 'number') {
+            // Already in new format, ensure srsState is valid
+             if (!item.srsState.status || !item.srsState.hasOwnProperty('ease') || !item.srsState.hasOwnProperty('step')) {
+                // Corrupted or old srsState, re-initialize
+                const card = new SimpleSpacedRepetitionCard();
+                return { ...item, srsState: card.toPlainObject(), nextReviewDate: Date.now() };
+            }
+            return item as WordDefinition;
+          }
+          // Migration needed from old format (word, definition, status?) or incomplete new format
+          const newCardBase = SimpleSpacedRepetitionCard.newCardState();
+          let nextReview = Date.now();
+
+          if (item.status === 'known') { // old format
+            newCardBase.status = 'reviewing';
+            newCardBase.interval = DAY_MS; // Start with a 1-day interval
+            // nextReviewDate will be now, to allow immediate review and proper scheduling
+          }
+          // For 'unknown' or no status, it defaults to a new 'learning' card due now.
+
+          return {
+            word: item.word,
+            definition: item.definition,
+            srsState: newCardBase,
+            nextReviewDate: nextReview,
+          };
+        }).filter(d => d.word && d.definition && d.srsState && typeof d.nextReviewDate === 'number');
+        
+        setDictionary(migratedDictionary);
       }
       if (storedFileName) {
         setFileName(storedFileName);
       }
     } catch (e) {
       console.error("Failed to load data from localStorage:", e);
-      localStorage.removeItem(LOCAL_STORAGE_DICTIONARY_KEY);
-      localStorage.removeItem(LOCAL_STORAGE_FILENAME_KEY);
+      // Avoid clearing potentially good new format data if old format parsing fails
     }
   }, []);
 
   useEffect(() => {
     try {
-      if (dictionary.length > 0) {
+      if (dictionary.length > 0 || fileName) { // Save even if dictionary is empty but a file was loaded
         localStorage.setItem(LOCAL_STORAGE_DICTIONARY_KEY, JSON.stringify(dictionary));
       } else {
-        // Only remove if dictionary is truly empty AND no file is "loaded"
-        // This prevents clearing a loaded empty dictionary if user intends to keep its name
-        if (!fileName && dictionary.length === 0) { 
-            localStorage.removeItem(LOCAL_STORAGE_DICTIONARY_KEY);
-        } else if (dictionary.length === 0 && fileName) {
-            // If a file is loaded but it's empty, store the empty dictionary
-            localStorage.setItem(LOCAL_STORAGE_DICTIONARY_KEY, JSON.stringify([]));
-        }
+        localStorage.removeItem(LOCAL_STORAGE_DICTIONARY_KEY);
       }
     } catch (e) {
       console.error("Failed to save dictionary to localStorage:", e);
@@ -67,71 +93,80 @@ const App: React.FC = () => {
         localStorage.setItem(LOCAL_STORAGE_FILENAME_KEY, fileName);
       } else {
         localStorage.removeItem(LOCAL_STORAGE_FILENAME_KEY);
-        localStorage.removeItem(LOCAL_STORAGE_DICTIONARY_KEY); // Also clear dictionary if filename is cleared
       }
     } catch (e) {
       console.error("Failed to save fileName to localStorage:", e);
     }
   }, [fileName]);
   
-  const filteredDictionary = useMemo(() => {
-    return dictionary.filter(item => item.status !== 'known');
+  const reviewableWords = useMemo(() => {
+    const now = Date.now();
+    const dueWords = dictionary.filter(item => item.nextReviewDate <= now);
+    return shuffleArray(dueWords); // Shuffle the due words
   }, [dictionary]);
 
-  const handleFileLoad = useCallback((data: WordDefinition[], name: string) => {
-    const newDictionary = data.map(item => ({ ...item, status: 'unknown' as WordStatus }));
+  const handleFileLoad = useCallback((data: Array<{word: string, definition: string}>, name: string) => {
+    const now = Date.now();
+    const newDictionary = data.map(item => ({
+      ...item,
+      srsState: SimpleSpacedRepetitionCard.newCardState(),
+      nextReviewDate: now, // All new words are due immediately
+    }));
     setDictionary(newDictionary);
     setCurrentIndex(0);
     setFileName(name);
     setError(null);
-     if (data.length === 0 && name) { // If a file was loaded but it's empty
+     if (data.length === 0 && name) {
         setError(`The file "${name}" is valid but contains no definitions.`);
     }
+    setShowAllWordsView(false); // Go back to main view
   }, []);
 
   const handleError = useCallback((message: string) => {
     setError(message);
   }, []);
 
+  const handleSpacedRepetitionChoice = useCallback((wordValue: string, option: SRSOption) => {
+    setDictionary(prevDict => {
+      return prevDict.map(item => {
+        if (item.word === wordValue) {
+          const newSrsState = option.nextState;
+          const newNextReviewDate = Date.now() + (newSrsState.interval || 0);
+          return { ...item, srsState: newSrsState, nextReviewDate: newNextReviewDate };
+        }
+        return item;
+      });
+    });
+    // currentIndex adjustment will be handled by the useEffect below,
+    // as reviewableWords will be a new (shuffled) list.
+  }, [/* setDictionary is a dependency but dictionary itself is not needed here */]);
+
+
+  useEffect(() => {
+    // If currentIndex is out of bounds of the new (potentially shuffled) reviewableWords list,
+    // or if the list becomes empty, adjust currentIndex.
+    if (reviewableWords.length === 0) {
+      setCurrentIndex(0);
+    } else if (currentIndex >= reviewableWords.length) {
+      setCurrentIndex(reviewableWords.length - 1);
+    }
+    // No change if currentIndex is still valid.
+    // This ensures that after a word is answered and reviewableWords is re-shuffled,
+    // currentIndex still points to a valid word in the new list.
+  }, [reviewableWords, currentIndex]);
+
+
   const handleNext = useCallback(() => {
-    if (currentIndex < filteredDictionary.length - 1) {
+    if (currentIndex < reviewableWords.length - 1) {
       setCurrentIndex(prevIndex => prevIndex + 1);
     }
-  }, [currentIndex, filteredDictionary.length]);
+  }, [currentIndex, reviewableWords.length]);
 
   const handlePrev = useCallback(() => {
     if (currentIndex > 0) {
       setCurrentIndex(prevIndex => prevIndex - 1);
     }
   }, [currentIndex]);
-
-  const handleSetWordStatus = useCallback((wordValue: string, status: WordStatus) => {
-    const currentWordInFilteredListBeforeUpdate = filteredDictionary[currentIndex];
-    
-    setDictionary(prevDict => 
-      prevDict.map(item => 
-        item.word === wordValue ? { ...item, status } : item
-      )
-    );
-
-    if (status === 'known' && currentWordInFilteredListBeforeUpdate?.word === wordValue) {
-      // Adjust index: if current item is marked known, try to stay on current "position" or move to last if it was the last one.
-      const newFilteredList = dictionary.map(item => item.word === wordValue ? { ...item, status } : item).filter(item => item.status !== 'known');
-      if (newFilteredList.length === 0) {
-        setCurrentIndex(0); // No items left to review
-      } else {
-         // Try to find the item that was *after* the one just marked known, or stay at the end.
-        const originalFilteredIndex = filteredDictionary.findIndex(fitem => fitem.word === currentWordInFilteredListBeforeUpdate.word);
-        
-        let newIndexCandidate = originalFilteredIndex; 
-        if (newIndexCandidate >= newFilteredList.length) { // If it was the last item or beyond
-            newIndexCandidate = newFilteredList.length - 1;
-        }
-        setCurrentIndex(Math.max(0, newIndexCandidate));
-      }
-    }
-  }, [currentIndex, filteredDictionary, dictionary]);
-
 
   const handleReset = useCallback(() => {
     if (window.confirm("Are you sure you want to reset all data? This will clear the loaded dictionary, all word progress, and remove data from local storage.")) {
@@ -140,7 +175,7 @@ const App: React.FC = () => {
       setFileName(null);
       setError(null);
       setShowAllWordsView(false); 
-      // localStorage removal handled by useEffect for fileName and dictionary
+      // localStorage removal is handled by useEffects for dictionary & fileName when they become empty/null
     }
   }, []);
 
@@ -153,25 +188,27 @@ const App: React.FC = () => {
     return (
       <AllWordsDisplay
         dictionary={dictionary}
-        onSetStatus={handleSetWordStatus}
         onBack={handleToggleAllWordsView}
         fileName={fileName}
       />
     );
   }
 
-  const currentItem = filteredDictionary.length > 0 && currentIndex < filteredDictionary.length ? filteredDictionary[currentIndex] : null;
+  const currentItem = reviewableWords.length > 0 && currentIndex < reviewableWords.length ? reviewableWords[currentIndex] : null;
   const buttonBaseClass = "w-full sm:w-auto flex items-center justify-center px-5 py-2.5 border rounded-lg shadow-md text-sm font-medium focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-slate-800 transition-colors duration-150 disabled:opacity-50 disabled:cursor-not-allowed";
+
+  const totalWordsToReview = reviewableWords.length;
+  // const totalKnownWords = dictionary.filter(d => d.srsState.status === 'reviewing' && d.srsState.interval && d.srsState.interval > 7 * DAY_MS).length; // Example of "known"
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 to-slate-800 text-gray-100 flex flex-col items-center justify-center p-4 selection:bg-indigo-500 selection:text-white">
       <div className="w-full max-w-2xl">
         <header className="mb-8 text-center">
           <h1 className="text-4xl sm:text-5xl font-extrabold tracking-tight text-transparent bg-clip-text bg-gradient-to-r from-purple-400 via-pink-500 to-red-500">
-            JSON Word Definer
+            SRS Word Definer
           </h1>
           <p className="mt-3 text-lg text-slate-400 max-w-xl mx-auto">
-            Upload, learn, and track your vocabulary. Progress is saved in your browser.
+            Learn vocabulary with Spaced Repetition. Progress is saved locally.
           </p>
         </header>
 
@@ -182,13 +219,13 @@ const App: React.FC = () => {
               onError={handleError} 
               setIsLoading={setIsLoading} 
             />
-            {fileName !== null && !isLoading && (
+            {(fileName !== null || dictionary.length > 0) && !isLoading && ( // Show buttons if data exists
               <div className="w-full sm:w-auto flex flex-col sm:flex-row space-y-3 sm:space-y-0 sm:space-x-3">
                 <button
                   onClick={handleToggleAllWordsView}
                   className={`${buttonBaseClass} border-sky-600/50 text-sky-300 bg-sky-500/20 hover:bg-sky-500/30 hover:text-sky-200 focus:ring-sky-500`}
                   title="View all words and their status"
-                  disabled={isLoading} 
+                  disabled={isLoading || dictionary.length === 0} 
                 >
                   <ClipboardListIcon className="w-5 h-5 mr-2" />
                   View All Words
@@ -216,20 +253,21 @@ const App: React.FC = () => {
             </div>
           )}
 
-          {fileName && !error && ( 
+          {fileName && !error && !isLoading && ( 
             <div className="mt-4 mb-2 text-xs text-center text-slate-500">
               Loaded: <span className="font-medium text-slate-400">{fileName}</span>
               {dictionary.length > 0 && (
                 <>
                   {' - '}
-                  Reviewing: <span className="font-medium text-indigo-300">{filteredDictionary.length}</span> of <span className="font-medium text-slate-400">{dictionary.length}</span> words.
+                  <span className="font-medium text-indigo-300">{totalWordsToReview}</span> words to review.
+                  Total in deck: <span className="font-medium text-slate-400">{dictionary.length}</span>.
                 </>
               )}
             </div>
           )}
           
           {isLoading && (
-            <WordDisplay item={null} isLoading={true} onSetStatus={handleSetWordStatus} />
+            <WordDisplay item={null} isLoading={true} onSpacedRepetitionChoice={handleSpacedRepetitionChoice} />
           )}
 
           {!isLoading && !error && dictionary.length === 0 && !fileName && ( 
@@ -240,8 +278,7 @@ const App: React.FC = () => {
                 <p className="text-sm">
                   Upload a JSON file to begin. It should be an array of objects, each with non-empty <code className="bg-slate-600 px-1 py-0.5 rounded text-xs text-indigo-300">word</code> and <code className="bg-slate-600 px-1 py-0.5 rounded text-xs text-indigo-300">definition</code> strings.
                 </p>
-                <p className="text-sm mt-2">Example:</p>
-                <pre className="mt-1 p-3 bg-slate-900/70 rounded text-xs text-slate-300 overflow-x-auto">
+                 <pre className="mt-1 p-3 bg-slate-900/70 rounded text-xs text-slate-300 overflow-x-auto">
                   <code>
   {`[
     { "word": "Ephemeral", "definition": "Lasting for a very short time." },
@@ -253,13 +290,14 @@ const App: React.FC = () => {
             </div>
           )}
           
-          {!isLoading && fileName && dictionary.length === 0 && error && ( // This condition was !error, changed to error
+          {!isLoading && fileName && dictionary.length === 0 && error && ( // Error from file load but file name is present
              <div className="mt-8 p-6 bg-slate-700/50 border border-slate-600 text-slate-400 rounded-lg flex items-start space-x-3">
               <InformationCircleIcon className="h-8 w-8 text-indigo-400 flex-shrink-0 mt-0.5" />
                 <div>
-                    <h3 className="font-semibold text-slate-300">Empty File Loaded</h3>
+                    <h3 className="font-semibold text-slate-300">Empty or Invalid File</h3>
                     <p className="text-sm">
                     The file <code className="bg-slate-600 px-1 py-0.5 rounded text-xs text-indigo-300">{fileName}</code> was loaded, but it appears to be empty or does not contain valid definitions.
+                    The error was: {error}
                     </p>
                     <p className="text-sm mt-2">You can <button onClick={handleReset} className="text-indigo-400 hover:text-indigo-300 underline font-medium">reset</button> and try uploading a different file.</p>
                 </div>
@@ -267,37 +305,37 @@ const App: React.FC = () => {
           )}
 
 
-          {!isLoading && !error && dictionary.length > 0 && filteredDictionary.length === 0 && ( 
+          {!isLoading && !error && dictionary.length > 0 && totalWordsToReview === 0 && ( 
             <div className="mt-8 p-6 bg-slate-700/50 border border-slate-600 text-slate-300 rounded-lg flex items-center space-x-3">
-              <CheckCircleIcon className="h-8 w-8 text-green-400 flex-shrink-0" />
+              <SparklesIcon className="h-8 w-8 text-green-400 flex-shrink-0" />
               <div>
-                <h3 className="font-semibold text-green-300">All Words Mastered!</h3>
+                <h3 className="font-semibold text-green-300">All Reviews Done!</h3>
                 <p className="text-sm">
-                  You've marked all words in <code className="bg-slate-600 px-1 py-0.5 rounded text-xs text-indigo-300">{fileName || 'the current set'}</code> as known.
+                  You've reviewed all due words in <code className="bg-slate-600 px-1 py-0.5 rounded text-xs text-indigo-300">{fileName || 'the current set'}</code> for now.
                 </p>
                 <p className="text-sm mt-2">
-                  You can <button onClick={handleReset} className="text-indigo-400 hover:text-indigo-300 underline font-medium">reset progress</button>, <button onClick={handleToggleAllWordsView} className="text-sky-400 hover:text-sky-300 underline font-medium">view all words</button>, or upload a new file.
+                  Check back later for more reviews, or <button onClick={handleToggleAllWordsView} className="text-sky-400 hover:text-sky-300 underline font-medium">view all words</button>.
                 </p>
               </div>
             </div>
           )}
           
           {!isLoading && currentItem && !error && (
-            <WordDisplay item={currentItem} isLoading={false} onSetStatus={handleSetWordStatus} />
+            <WordDisplay item={currentItem} isLoading={false} onSpacedRepetitionChoice={handleSpacedRepetitionChoice} />
           )}
 
-          {!isLoading && !error && filteredDictionary.length > 0 && (
+          {!isLoading && !error && totalWordsToReview > 0 && (
             <NavigationControls
               currentIndex={currentIndex}
-              totalItems={filteredDictionary.length}
+              totalItems={totalWordsToReview}
               onNext={handleNext}
               onPrev={handlePrev}
-              disabled={isLoading || filteredDictionary.length === 0}
+              disabled={isLoading || totalWordsToReview === 0}
             />
           )}
         </main>
         <footer className="mt-10 text-center text-xs text-slate-600">
-          <p>A React & Tailwind CSS Application. Enhanced with local persistence & review modes.</p>
+          <p>Spaced Repetition System. Enhanced with local persistence.</p>
         </footer>
       </div>
     </div>
@@ -305,3 +343,4 @@ const App: React.FC = () => {
 };
 
 export default App;
+
