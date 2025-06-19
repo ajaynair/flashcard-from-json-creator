@@ -1,7 +1,8 @@
+// import './index.css'; // Import the external CSS file. Remains commented out.
+
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
-// import './index.css'; // Removed: Tailwind handled by CDN, scrollbar styles moved to index.html
 
 const rootElement = document.getElementById('root');
 if (!rootElement) {

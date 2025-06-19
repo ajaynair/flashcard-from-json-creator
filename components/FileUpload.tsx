@@ -44,7 +44,7 @@ export const FileUpload: React.FC<FileUploadProps> = ({ onFileLoad, onError, set
 
         if (isValidWordDefinitionArray(jsonData)) {
           if (jsonData.length === 0) {
-            localError = 'The JSON file is valid but contains no definitions.';
+            // Error will be set in App.tsx to include filename
             onFileLoad([], file.name); 
           } else {
             onFileLoad(jsonData, file.name);
@@ -82,7 +82,7 @@ export const FileUpload: React.FC<FileUploadProps> = ({ onFileLoad, onError, set
   };
 
   return (
-    <div className="w-full max-w-md mx-auto my-4">
+    <div className="w-full max-w-md mx-auto my-4 sm:my-0"> {/* Adjusted margin for smaller screens */}
       <input
         type="file"
         accept=".json"

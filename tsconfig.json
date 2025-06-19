@@ -19,6 +19,6 @@
     "noFallthroughCasesInSwitch": true,
     "types": ["vite/client"]
   },
-  "include": ["src", "vite.config.ts", "postcss.config.js", "tailwind.config.js"],
+  "include": ["index.tsx", "App.tsx", "types.ts", "components"],
   "references": [{ "path": "./tsconfig.node.json" }]
 }

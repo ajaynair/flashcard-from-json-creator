@@ -11,7 +11,8 @@ interface AllWordsDisplayProps {
 
 export const AllWordsDisplay: React.FC<AllWordsDisplayProps> = ({ dictionary, onSetStatus, onBack, fileName }) => {
   const knownWords = dictionary.filter(item => item.status === 'known');
-  const reviewLaterWords = dictionary.filter(item => item.status !== 'known'); // Includes 'unknown' and undefined
+  // Only include words explicitly marked as 'unknown' (which is the default for new words).
+  const reviewLaterWords = dictionary.filter(item => item.status === 'unknown'); 
 
   const renderWordList = (words: WordDefinition[], listType: 'known' | 'reviewLater') => {
     if (words.length === 0) {
@@ -33,7 +34,7 @@ export const AllWordsDisplay: React.FC<AllWordsDisplayProps> = ({ dictionary, on
                   <XCircleIcon className="w-4 h-4" />
                   <span>Mark to Review Later</span>
                 </button>
-              ) : (
+              ) : ( // reviewLater list
                 <button
                   onClick={() => onSetStatus(item.word, 'known')}
                   className="text-xs font-medium text-green-400 hover:text-green-300 flex items-center space-x-1.5 py-1 px-2 rounded hover:bg-green-500/10 transition-colors"

@@ -1,3 +1,5 @@
+
+
 import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import { WordDefinition, WordStatus } from './types';
 import { FileUpload } from './components/FileUpload';
@@ -45,12 +47,19 @@ const App: React.FC = () => {
       if (dictionary.length > 0) {
         localStorage.setItem(LOCAL_STORAGE_DICTIONARY_KEY, JSON.stringify(dictionary));
       } else {
-        localStorage.removeItem(LOCAL_STORAGE_DICTIONARY_KEY);
+        // Only remove if dictionary is truly empty AND no file is "loaded"
+        // This prevents clearing a loaded empty dictionary if user intends to keep its name
+        if (!fileName && dictionary.length === 0) { 
+            localStorage.removeItem(LOCAL_STORAGE_DICTIONARY_KEY);
+        } else if (dictionary.length === 0 && fileName) {
+            // If a file is loaded but it's empty, store the empty dictionary
+            localStorage.setItem(LOCAL_STORAGE_DICTIONARY_KEY, JSON.stringify([]));
+        }
       }
     } catch (e) {
       console.error("Failed to save dictionary to localStorage:", e);
     }
-  }, [dictionary]);
+  }, [dictionary, fileName]);
 
   useEffect(() => {
     try {
@@ -58,6 +67,7 @@ const App: React.FC = () => {
         localStorage.setItem(LOCAL_STORAGE_FILENAME_KEY, fileName);
       } else {
         localStorage.removeItem(LOCAL_STORAGE_FILENAME_KEY);
+        localStorage.removeItem(LOCAL_STORAGE_DICTIONARY_KEY); // Also clear dictionary if filename is cleared
       }
     } catch (e) {
       console.error("Failed to save fileName to localStorage:", e);
@@ -75,7 +85,6 @@ const App: React.FC = () => {
     setFileName(name);
     setError(null);
      if (data.length === 0 && name) { // If a file was loaded but it's empty
-        // FileUpload handles error for unparseable, this is for valid but empty
         setError(`The file "${name}" is valid but contains no definitions.`);
     }
   }, []);
@@ -106,16 +115,22 @@ const App: React.FC = () => {
     );
 
     if (status === 'known' && currentWordInFilteredListBeforeUpdate?.word === wordValue) {
-      // The word just marked 'known' was the current word in the filtered list.
-      // Adjust currentIndex: if it was the last item, it should go to the new last item.
-      // Otherwise, it can stay, as subsequent items shift up.
-      // The `filteredDictionary` will update in the next render cycle based on the new `dictionary`.
-      // `Math.min` ensures index doesn't exceed new bounds. `Math.max(0, ...)` ensures it's not negative.
-      // We calculate the expected new length of the filtered list if this word is removed.
-      const newFilteredLength = filteredDictionary.filter(item => item.status !== 'known' && item.word !== wordValue).length;
-      setCurrentIndex(prevIdx => Math.min(prevIdx, Math.max(0, newFilteredLength -1)));
+      // Adjust index: if current item is marked known, try to stay on current "position" or move to last if it was the last one.
+      const newFilteredList = dictionary.map(item => item.word === wordValue ? { ...item, status } : item).filter(item => item.status !== 'known');
+      if (newFilteredList.length === 0) {
+        setCurrentIndex(0); // No items left to review
+      } else {
+         // Try to find the item that was *after* the one just marked known, or stay at the end.
+        const originalFilteredIndex = filteredDictionary.findIndex(fitem => fitem.word === currentWordInFilteredListBeforeUpdate.word);
+        
+        let newIndexCandidate = originalFilteredIndex; 
+        if (newIndexCandidate >= newFilteredList.length) { // If it was the last item or beyond
+            newIndexCandidate = newFilteredList.length - 1;
+        }
+        setCurrentIndex(Math.max(0, newIndexCandidate));
+      }
     }
-  }, [currentIndex, filteredDictionary]);
+  }, [currentIndex, filteredDictionary, dictionary]);
 
 
   const handleReset = useCallback(() => {
@@ -124,15 +139,14 @@ const App: React.FC = () => {
       setCurrentIndex(0);
       setFileName(null);
       setError(null);
-      setShowAllWordsView(false); // Go back to main view if in AllWordsView
-      localStorage.removeItem(LOCAL_STORAGE_DICTIONARY_KEY);
-      localStorage.removeItem(LOCAL_STORAGE_FILENAME_KEY);
+      setShowAllWordsView(false); 
+      // localStorage removal handled by useEffect for fileName and dictionary
     }
   }, []);
 
   const handleToggleAllWordsView = () => {
     setShowAllWordsView(prev => !prev);
-    setError(null); // Clear errors when switching views
+    setError(null); 
   };
   
   if (showAllWordsView) {
@@ -168,26 +182,28 @@ const App: React.FC = () => {
               onError={handleError} 
               setIsLoading={setIsLoading} 
             />
-            <div className="w-full sm:w-auto flex flex-col sm:flex-row space-y-3 sm:space-y-0 sm:space-x-3">
-              <button
-                onClick={handleToggleAllWordsView}
-                className={`${buttonBaseClass} border-sky-600/50 text-sky-300 bg-sky-500/20 hover:bg-sky-500/30 hover:text-sky-200 focus:ring-sky-500`}
-                title="View all words and their status"
-                disabled={dictionary.length === 0 || isLoading}
-              >
-                <ClipboardListIcon className="w-5 h-5 mr-2" />
-                View All Words
-              </button>
-              <button
-                onClick={handleReset}
-                className={`${buttonBaseClass} border-red-600/50 text-red-300 bg-red-500/20 hover:bg-red-500/30 hover:text-red-200 focus:ring-red-500`}
-                title="Reset all data"
-                disabled={isLoading}
-              >
-                <ArrowPathIcon className="w-5 h-5 mr-2" />
-                Reset All Data
-              </button>
-            </div>
+            {fileName !== null && !isLoading && (
+              <div className="w-full sm:w-auto flex flex-col sm:flex-row space-y-3 sm:space-y-0 sm:space-x-3">
+                <button
+                  onClick={handleToggleAllWordsView}
+                  className={`${buttonBaseClass} border-sky-600/50 text-sky-300 bg-sky-500/20 hover:bg-sky-500/30 hover:text-sky-200 focus:ring-sky-500`}
+                  title="View all words and their status"
+                  disabled={isLoading} 
+                >
+                  <ClipboardListIcon className="w-5 h-5 mr-2" />
+                  View All Words
+                </button>
+                <button
+                  onClick={handleReset}
+                  className={`${buttonBaseClass} border-red-600/50 text-red-300 bg-red-500/20 hover:bg-red-500/30 hover:text-red-200 focus:ring-red-500`}
+                  title="Reset all data"
+                  disabled={isLoading} 
+                >
+                  <ArrowPathIcon className="w-5 h-5 mr-2" />
+                  Reset All Data
+                </button>
+              </div>
+            )}
           </div>
 
           {error && (
@@ -200,11 +216,15 @@ const App: React.FC = () => {
             </div>
           )}
 
-          {fileName && !error && dictionary.length > 0 && (
+          {fileName && !error && ( 
             <div className="mt-4 mb-2 text-xs text-center text-slate-500">
               Loaded: <span className="font-medium text-slate-400">{fileName}</span>
-              {' - '}
-              Reviewing: <span className="font-medium text-indigo-300">{filteredDictionary.length}</span> of <span className="font-medium text-slate-400">{dictionary.length}</span> words.
+              {dictionary.length > 0 && (
+                <>
+                  {' - '}
+                  Reviewing: <span className="font-medium text-indigo-300">{filteredDictionary.length}</span> of <span className="font-medium text-slate-400">{dictionary.length}</span> words.
+                </>
+              )}
             </div>
           )}
           
@@ -212,7 +232,7 @@ const App: React.FC = () => {
             <WordDisplay item={null} isLoading={true} onSetStatus={handleSetWordStatus} />
           )}
 
-          {!isLoading && !error && dictionary.length === 0 && !fileName && (
+          {!isLoading && !error && dictionary.length === 0 && !fileName && ( 
             <div className="mt-8 p-6 bg-slate-700/50 border border-slate-600 text-slate-400 rounded-lg flex items-start space-x-3">
               <InformationCircleIcon className="h-8 w-8 text-indigo-400 flex-shrink-0 mt-0.5" />
               <div>
@@ -232,8 +252,22 @@ const App: React.FC = () => {
               </div>
             </div>
           )}
+          
+          {!isLoading && fileName && dictionary.length === 0 && error && ( // This condition was !error, changed to error
+             <div className="mt-8 p-6 bg-slate-700/50 border border-slate-600 text-slate-400 rounded-lg flex items-start space-x-3">
+              <InformationCircleIcon className="h-8 w-8 text-indigo-400 flex-shrink-0 mt-0.5" />
+                <div>
+                    <h3 className="font-semibold text-slate-300">Empty File Loaded</h3>
+                    <p className="text-sm">
+                    The file <code className="bg-slate-600 px-1 py-0.5 rounded text-xs text-indigo-300">{fileName}</code> was loaded, but it appears to be empty or does not contain valid definitions.
+                    </p>
+                    <p className="text-sm mt-2">You can <button onClick={handleReset} className="text-indigo-400 hover:text-indigo-300 underline font-medium">reset</button> and try uploading a different file.</p>
+                </div>
+            </div>
+          )}
 
-          {!isLoading && !error && dictionary.length > 0 && filteredDictionary.length === 0 && (
+
+          {!isLoading && !error && dictionary.length > 0 && filteredDictionary.length === 0 && ( 
             <div className="mt-8 p-6 bg-slate-700/50 border border-slate-600 text-slate-300 rounded-lg flex items-center space-x-3">
               <CheckCircleIcon className="h-8 w-8 text-green-400 flex-shrink-0" />
               <div>
